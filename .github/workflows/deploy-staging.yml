@@ -1,0 +1,74 @@
+name: Deploy STAGING
+
+# Publishes a branch (or commit) of dimitridigiacomo-ux/cleanflow2 to the staging site,
+# pointed at the STAGING backend. Production is never touched.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch or commit of cleanflow2 to publish in staging'
+        required: true
+        default: 'main'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout staging tools
+        uses: actions/checkout@v4
+        with:
+          path: staging
+
+      - name: Checkout CleanFlow at the requested ref
+        uses: actions/checkout@v4
+        with:
+          repository: dimitridigiacomo-ux/cleanflow2
+          ref: ${{ inputs.ref }}
+          path: site
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # Same build as production, when the ref has it.
+      - name: Precompile JSX (if available in this ref)
+        working-directory: site
+        run: |
+          if [ -f tools/build/precompile.js ]; then
+            npm ci --prefix tools/build --no-audit --no-fund
+            node tools/build/precompile.js index.html index.html
+            rm -rf tools/build/node_modules
+          else
+            echo "No tools/build/precompile.js in this ref: publishing the source (in-browser Babel)."
+          fi
+
+      - name: Point to the staging backend + STAGING banner
+        env:
+          STAGING_API_URL: ${{ vars.STAGING_API_URL }}
+          REF: ${{ inputs.ref }}
+        run: SHA=$(git -C site rev-parse HEAD) node staging/stage.js site/index.html
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
